@@ -13,6 +13,7 @@ import (
 
 const (
   DIGITS string = "0123456789"
+  OPERATORS string = "^*/+-"
   EOF rune = -1
 )
 
@@ -23,11 +24,17 @@ const (
   ErrLexeme LexemeType = iota
   NumberLexeme
   OperatorLexeme
+  LeftParenLexeme
+  RightParenLexeme
 )
 
 type Lexeme struct {
   lexeme_type LexemeType
   value string
+}
+
+func (l *Lexeme) String() string {
+  return l.value
 }
 
 type Lexer struct {
@@ -39,7 +46,7 @@ type Lexer struct {
   stream chan Lexeme
 }
 
-func (l *Lexer) Next() rune {
+func (l *Lexer) Peek() rune {
   if l.window.end >= len(l.input) {
     return EOF
   }
@@ -71,7 +78,7 @@ func (l *Lexer) Emit(lexeme_type LexemeType) {
 
 func lexStart(l *Lexer) (next_fn LexFn) {
   for {
-    r := l.Next()
+    r := l.Peek()
 
     if r == EOF {
       return nil
@@ -79,8 +86,18 @@ func lexStart(l *Lexer) (next_fn LexFn) {
       l.Skip()
     } else if strings.IndexRune(DIGITS, r) >= 0 {
       return lexNumber
+    } else if strings.IndexRune(OPERATORS, r) >= 0 {
+      l.Expand()
+      l.Emit(OperatorLexeme)
+    } else if r == '(' {
+      l.Expand()
+      l.Emit(LeftParenLexeme)
+    } else if r == ')' {
+      l.Expand()
+      l.Emit(RightParenLexeme)
     } else {
-      return lexOperator
+      l.Expand()
+      l.Emit(ErrLexeme)
     }
   }
 
@@ -89,7 +106,7 @@ func lexStart(l *Lexer) (next_fn LexFn) {
 
 func lexNumber(l *Lexer) LexFn {
   for {
-    r := l.Next()
+    r := l.Peek()
     if strings.IndexRune(DIGITS, r) >= 0{
       l.Expand()
     } else {
@@ -101,19 +118,14 @@ func lexNumber(l *Lexer) LexFn {
   return lexStart
 }
 
-func lexOperator(l *Lexer) LexFn {
-  l.Expand()
-  l.Emit(OperatorLexeme)
+
+func lexLeftParen(l *Lexer) LexFn {
   return lexStart
 }
 
-// func lexLeftParen(l *Lexer) LexFn {
-//   return lexStart
-// }
-
-// func lexRightParen(l *Lexer) LexFn {
-//   return lexStart
-// }
+func lexRightParen(l *Lexer) LexFn {
+  return lexStart
+}
 
 func (l *Lexer) Run() {
   for state := lexStart; state != nil; {
@@ -207,37 +219,124 @@ func newExpression(oper Operator, left Expression, right Expression) Expression 
   return expr
 }
 
+//for this function, assume valid input
 func groupLexemes(lexemes []Lexeme) Expression {
+
   if len(lexemes) == 1 {
     val, _ := strconv.Atoi(lexemes[0].value)
     return &ValueExpression{val}
   }
 
-  //janky
-  oper_idx := 1
-  lowest_oper := Operators[lexemes[1].value]
-  for i := 3; i+1 < len(lexemes); i += 2 {
-    oper := Operators[lexemes[i].value]
-    if oper < lowest_oper {
-      oper_idx = i
+  fmt.Printf("in group! ---\n")
+  fmt.Printf("len(lexemes): %d\n", len(lexemes))
+
+  fmt.Printf("got:")
+  for i := range lexemes {
+    fmt.Printf(" %s", lexemes[i].value)
+  }
+  fmt.Printf("\n")
+
+  // groups := make([][]Lexeme{}, len(lexemes)/2 + 1)
+  // operators := make([]Lexeme{}, len(lexemes)/2)
+
+  // nesting := 0
+
+  // for i := range lexemes {
+  //   l := lexemes[i]
+
+  //   switch l.lexeme_type {
+  //   case NumberLexeme:
+  //     if nesting == 0 {
+  //       append(groups, []Lexeme{l})
+  //     } else {
+  //       continue
+  //     }
+  //   case LeftParenLexeme:
+  //     nesting += 1
+  //   case RightParenLexeme:
+  //     nesting -= 1
+  //     if nesting == 0 {
+
+  //     }
+  //   case OperatorLexeme:
+  //     oper := Operators[l.value]
+  //     if nesting == 0 && oper > highest_oper {
+  //       highest_oper = oper
+  //       split_at = i
+  //     }
+  //   }
+  // }
+
+
+  //try to unwrap the outermost parens
+  last := len(lexemes) - 1
+  if lexemes[0].lexeme_type == LeftParenLexeme {
+    nesting := 0
+    unwrap := false
+    for i := range lexemes {
+      l := lexemes[i]
+
+      if l.lexeme_type == LeftParenLexeme {
+        nesting += 1
+      } else if l.lexeme_type == RightParenLexeme {
+        nesting -= 1
+        if nesting == 0 {
+          if i == last {
+            unwrap = true
+          }
+          break
+        }
+      }
+    }
+
+    if unwrap {
+      lexemes = lexemes[1:last]
     }
   }
 
-  left := groupLexemes(lexemes[:oper_idx-1])
-  right := groupLexemes(lexemes[oper_idx+1:])
-  return newExpression(lowest_oper, left, right)
+  split_at := -1
+  highest_oper := Operator(-1)
+  nesting := 0
+  for i := range lexemes {
+    l := lexemes[i]
+
+    switch l.lexeme_type {
+    case NumberLexeme:
+      continue
+    case LeftParenLexeme:
+      nesting += 1
+    case RightParenLexeme:
+      nesting -= 1
+    case OperatorLexeme:
+      oper := Operators[l.value]
+      if nesting == 0 && oper > highest_oper {
+        highest_oper = oper
+        split_at = i
+      }
+    }
+  }
+
+  fmt.Printf("split_at: %d\n", split_at)
+  left := groupLexemes(lexemes[:split_at])
+  right := groupLexemes(lexemes[split_at+1:])
+  return newExpression(highest_oper, left, right)
 }
 
-func parse(lexer *Lexer) {
+func parse(lexer *Lexer) Expression {
+  //TODO: validate?
+  lexemes := []Lexeme{}
+  for l := range lexer.stream {
+    lexemes = append(lexemes, l)
+  }
 
+  return groupLexemes(lexemes)
 }
 
 func eval(line []byte) (int, error) {
   lexer := lex(string(line))
-  for lexeme := range lexer.stream {
-    fmt.Printf("got: %s (%i)\n", lexeme.value, lexeme.lexeme_type)
-  }
-  return 0, nil
+  expr := parse(lexer)
+
+  return expr.Evaluate(), nil
 }
 
 func main() {
@@ -258,8 +357,9 @@ func main() {
     }
 
     line := raw_line[:len(raw_line)-1]
-    if len(line) > 1 {
-      eval(line)
+    if len(line) > 0 {
+      res, _ := eval(line)
+      fmt.Printf("%d\n", res)
     }
   }
 }
