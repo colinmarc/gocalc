@@ -219,6 +219,33 @@ func newExpression(oper Operator, left Expression, right Expression) Expression 
   return expr
 }
 
+func unwrap_parens(lexemes []Lexeme) []Lexeme {
+  for lexemes[0].lexeme_type == LeftParenLexeme {
+    last := len(lexemes) - 1
+    nesting := 0
+    var i int
+    for i = range lexemes {
+      l := lexemes[i]
+      if l.lexeme_type == LeftParenLexeme {
+        nesting += 1
+      } else if l.lexeme_type == RightParenLexeme {
+        nesting -= 1
+        if nesting == 0 {
+          break
+        }
+      }
+    }
+
+    if i == last {
+      lexemes = lexemes[1:last]
+    } else {
+      break
+    }
+  }
+
+  return lexemes
+}
+
 //for this function, assume valid input
 func groupLexemes(lexemes []Lexeme) Expression {
 
@@ -227,76 +254,13 @@ func groupLexemes(lexemes []Lexeme) Expression {
     return &ValueExpression{val}
   }
 
-  fmt.Printf("in group! ---\n")
-  fmt.Printf("len(lexemes): %d\n", len(lexemes))
-
-  fmt.Printf("got:")
-  for i := range lexemes {
-    fmt.Printf(" %s", lexemes[i].value)
-  }
-  fmt.Printf("\n")
-
-  // groups := make([][]Lexeme{}, len(lexemes)/2 + 1)
-  // operators := make([]Lexeme{}, len(lexemes)/2)
-
-  // nesting := 0
-
-  // for i := range lexemes {
-  //   l := lexemes[i]
-
-  //   switch l.lexeme_type {
-  //   case NumberLexeme:
-  //     if nesting == 0 {
-  //       append(groups, []Lexeme{l})
-  //     } else {
-  //       continue
-  //     }
-  //   case LeftParenLexeme:
-  //     nesting += 1
-  //   case RightParenLexeme:
-  //     nesting -= 1
-  //     if nesting == 0 {
-
-  //     }
-  //   case OperatorLexeme:
-  //     oper := Operators[l.value]
-  //     if nesting == 0 && oper > highest_oper {
-  //       highest_oper = oper
-  //       split_at = i
-  //     }
-  //   }
-  // }
-
-
-  //try to unwrap the outermost parens
-  last := len(lexemes) - 1
-  if lexemes[0].lexeme_type == LeftParenLexeme {
-    nesting := 0
-    unwrap := false
-    for i := range lexemes {
-      l := lexemes[i]
-
-      if l.lexeme_type == LeftParenLexeme {
-        nesting += 1
-      } else if l.lexeme_type == RightParenLexeme {
-        nesting -= 1
-        if nesting == 0 {
-          if i == last {
-            unwrap = true
-          }
-          break
-        }
-      }
-    }
-
-    if unwrap {
-      lexemes = lexemes[1:last]
-    }
-  }
+  lexemes = unwrap_parens(lexemes)
 
   split_at := -1
+  lowest_nesting := -1
   highest_oper := Operator(-1)
   nesting := 0
+
   for i := range lexemes {
     l := lexemes[i]
 
@@ -309,14 +273,16 @@ func groupLexemes(lexemes []Lexeme) Expression {
       nesting -= 1
     case OperatorLexeme:
       oper := Operators[l.value]
-      if nesting == 0 && oper > highest_oper {
+      if split_at == -1 ||
+         nesting < lowest_nesting ||
+         (nesting == lowest_nesting && oper > highest_oper) {
         highest_oper = oper
         split_at = i
+        lowest_nesting = nesting
       }
     }
   }
 
-  fmt.Printf("split_at: %d\n", split_at)
   left := groupLexemes(lexemes[:split_at])
   right := groupLexemes(lexemes[split_at+1:])
   return newExpression(highest_oper, left, right)
